@@ -12,6 +12,9 @@ import Json.Encode
 port signIn : () -> Cmd msg
 
 
+port registerUser : Json.Encode.Value -> Cmd msg
+
+
 port signInInfo : (Json.Encode.Value -> msg) -> Sub msg
 
 
@@ -21,38 +24,62 @@ port signInError : (Json.Encode.Value -> msg) -> Sub msg
 port signOut : () -> Cmd msg
 
 
-port saveMessage : Json.Encode.Value -> Cmd msg
+port saveGroup : Json.Encode.Value -> Cmd msg
 
 
-port receiveMessages : (Json.Encode.Value -> msg) -> Sub msg
+port receiveGroups : (Json.Encode.Value -> msg) -> Sub msg
 
 
 
 ---- MODEL ----
 
 
-type alias MessageContent =
-    { uid : String, content : String }
-
-
 type alias ErrorData =
-    { code : Maybe String, message : Maybe String, credential : Maybe String }
+    { code : Maybe String
+    , message : Maybe String
+    , credential : Maybe String
+    }
 
 
 type alias UserData =
-    { token : String, email : String, uid : String }
+    { token : String
+    , email : String
+    , uid : String
+    }
+
+
+type alias Member =
+    { name : String
+    , class : String
+    }
+
+
+type alias GroupData =
+    { name : String
+    , members : Maybe (List Member)
+    }
 
 
 type alias Model =
-    { userData : Maybe UserData, error : ErrorData, inputContent : String, messages : List String }
+    { userData : Maybe UserData
+    , groups : Maybe (List GroupData)
+    , selectedGroup : Maybe Int
+    , error : ErrorData
+    , inputContent : String
+    }
 
 
 init : ( Model, Cmd Msg )
 init =
-    ( { userData = Maybe.Nothing, error = emptyError, inputContent = "", messages = [] }, Cmd.none )
+    ( { userData = Maybe.Nothing, groups = Maybe.Nothing, selectedGroup = Maybe.Nothing, error = emptyError, inputContent = "" }, Cmd.none )
 
 
 
+-- Collections -> Documents/Sub-collection
+-- Collection: User
+-- Name : String
+-- UID : Int
+-- Password: String
 ---- UPDATE ----
 
 
@@ -61,9 +88,10 @@ type Msg
     | LogOut
     | LoggedInData (Result Json.Decode.Error UserData)
     | LoggedInError (Result Json.Decode.Error ErrorData)
-    | SaveMessage
+    | SaveGroup
     | InputChanged String
-    | MessagesReceived (Result Json.Decode.Error (List String))
+    | GroupsReceived (Result Json.Decode.Error (List String))
+    | ChangeGroup Int
 
 
 emptyError : ErrorData
@@ -96,19 +124,22 @@ update msg model =
                 Err error ->
                     ( { model | error = messageToError <| Json.Decode.errorToString error }, Cmd.none )
 
-        SaveMessage ->
-            ( model, saveMessage <| messageEncoder model )
+        SaveGroup ->
+            ( model, saveGroup <| messageEncoder model )
 
         InputChanged value ->
             ( { model | inputContent = value }, Cmd.none )
 
-        MessagesReceived result ->
+        GroupsReceived result ->
             case result of
                 Ok value ->
-                    ( { model | messages = value }, Cmd.none )
+                    ( { model | groups = Just <| List.map (\s -> { name = s, members = Nothing }) value }, Cmd.none )
 
                 Err error ->
                     ( { model | error = messageToError <| Json.Decode.errorToString error }, Cmd.none )
+
+        ChangeGroup n ->
+            ( { model | selectedGroup = Just n }, registerUser <| userEncoder )
 
 
 messageEncoder : Model -> Json.Encode.Value
@@ -123,6 +154,14 @@ messageEncoder model =
                 Maybe.Nothing ->
                     Json.Encode.null
           )
+        ]
+
+
+userEncoder : Json.Encode.Value
+userEncoder =
+    Json.Encode.object
+        [ ( "email", Json.Encode.string "Swenmulderij@gmail.com" )
+        , ( "password", Json.Encode.string "safesafe" )
         ]
 
 
@@ -166,11 +205,28 @@ messageListDecoder =
 ---- VIEW ----
 
 
+groupView : Int -> Int -> GroupData -> Html Msg
+groupView selected i group =
+    if i /= selected then
+        Html.li []
+            [ Html.div []
+                [ Html.text group.name
+                , Html.button [ onClick <| ChangeGroup i ] [ Html.text "Select" ]
+                ]
+            ]
+
+    else
+        Html.li []
+            [ Html.div []
+                [ Html.text group.name
+                ]
+            ]
+
+
 view : Model -> Html Msg
 view model =
     div []
-        [ img [ src "/logo.svg" ] []
-        , h1 [] [ text "Your Elm App is working!" ]
+        [ h1 [] [ text "Lootshare" ]
         , case model.userData of
             Just data ->
                 button [ onClick LogOut ] [ text "Logout from Google" ]
@@ -179,31 +235,29 @@ view model =
                 button [ onClick LogIn ] [ text "Login with Google" ]
         , h2 []
             [ text <|
-                case model.userData of
-                    Just data ->
-                        data.email ++ " " ++ data.uid ++ " " ++ data.token
+                case model.groups of
+                    Nothing ->
+                        "No groups found"
 
-                    Maybe.Nothing ->
-                        ""
+                    Just groups ->
+                        "There are groups"
             ]
+        , case model.groups of
+            Nothing ->
+                Html.div [] []
+
+            Just groups ->
+                Html.ul [] <|
+                    List.indexedMap (groupView (Maybe.withDefault 0 model.selectedGroup)) groups
         , case model.userData of
             Just data ->
                 div []
-                    [ input [ placeholder "Message to save", value model.inputContent, onInput InputChanged ] []
-                    , button [ onClick SaveMessage ] [ text "Save new message" ]
+                    [ input [ placeholder "Group to create", value model.inputContent, onInput InputChanged ] []
+                    , button [ onClick SaveGroup ] [ text "Create group" ]
                     ]
 
-            Maybe.Nothing ->
+            Nothing ->
                 div [] []
-        , div []
-            [ h3 []
-                [ text "Previous messages"
-                , div [] <|
-                    List.map
-                        (\m -> p [] [ text m ])
-                        model.messages
-                ]
-            ]
         , h2 [] [ text <| errorPrinter model.error ]
         ]
 
@@ -217,7 +271,7 @@ subscriptions model =
     Sub.batch
         [ signInInfo (Json.Decode.decodeValue userDataDecoder >> LoggedInData)
         , signInError (Json.Decode.decodeValue logInErrorDecoder >> LoggedInError)
-        , receiveMessages (Json.Decode.decodeValue messageListDecoder >> MessagesReceived)
+        , receiveGroups (Json.Decode.decodeValue messageListDecoder >> GroupsReceived)
         ]
 
 

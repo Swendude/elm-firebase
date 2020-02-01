@@ -28,6 +28,19 @@ const app = Elm.Main.init({
   node: document.getElementById("root")
 });
 
+app.ports.registerUser.subscribe(data => {
+  console.log("RegisterUser called");
+  firebase
+    .auth()
+    .createUserWithEmailAndPassword(data.email, data.password)
+    .catch(error => {
+      app.ports.signInError.send({
+        code: error.code,
+        message: error.message
+      })
+    })
+});
+
 app.ports.signIn.subscribe(() => {
   console.log("LogIn called");
   firebase
@@ -74,29 +87,30 @@ firebase.auth().onAuthStateChanged(user => {
       });
 
     // Set up listened on new messages
-    db.collection(`users/${user.uid}/messages`).onSnapshot(docs => {
+    db.collection(`users/${user.uid}/groups`).onSnapshot(groups => {
       console.log("Received new snapshot");
       const messages = [];
 
-      docs.forEach(doc => {
+      groups.forEach(doc => {
         if (doc.data().content) {
           messages.push(doc.data().content);
         }
       });
 
-      app.ports.receiveMessages.send({
+      app.ports.receiveGroups.send({
         messages: messages
       });
     });
   }
 });
 
-app.ports.saveMessage.subscribe(data => {
-  console.log(`saving message to database : ${data.content}`);
+app.ports.saveGroup.subscribe(data => {
+  console.log(`saving group to database : ${data.content}`);
 
-  db.collection(`users/${data.uid}/messages`)
+  db.collection(`users/${data.uid}/groups`)
     .add({
       content: data.content
+      , number: 42
     })
     .catch(error => {
       app.ports.signInError.send({
